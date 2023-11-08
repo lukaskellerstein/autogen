@@ -141,7 +141,7 @@ class RetrieveUserProxyAgent(UserProxyAgent):
         self._task = self._retrieve_config.get("task", "default")
         self._client = self._retrieve_config.get("client", chromadb.Client())
         self._docs_path = self._retrieve_config.get("docs_path", "./docs")
-        self._collection_name = self._retrieve_config.get("collection_name", "autogen-docs")
+        self._collection_name = self._retrieve_config.get("collection_name", "all-my-documents")
         self._model = self._retrieve_config.get("model", "gpt-4")
         self._max_tokens = self.get_max_tokens(self._model)
         self._chunk_token_size = int(self._retrieve_config.get("chunk_token_size", self._max_tokens * 0.4))
@@ -160,7 +160,12 @@ class RetrieveUserProxyAgent(UserProxyAgent):
         self._intermediate_answers = set()  # the intermediate answers
         self._doc_contents = []  # the contents of the current used doc
         self._doc_ids = []  # the ids of the current used doc
-        self.register_reply(Agent, RetrieveUserProxyAgent._generate_retrieve_user_reply)
+
+        print("before")
+        print(self._reply_func_list)
+        self.register_reply(Agent, RetrieveUserProxyAgent._generate_retrieve_user_reply, position=1)
+        print("after")
+        print(self._reply_func_list)
 
     @staticmethod
     def get_max_tokens(model="gpt-3.5-turbo"):

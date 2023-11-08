@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 from autogen import oai
+from autogen.agentchat.tool import BaseTool
 from .agent import Agent
 from autogen.code_utils import (
     DEFAULT_MODEL,
@@ -56,6 +57,7 @@ class ConversableAgent(Agent):
         code_execution_config: Optional[Union[Dict, bool]] = None,
         llm_config: Optional[Union[Dict, bool]] = None,
         default_auto_reply: Optional[Union[str, Dict, None]] = "",
+        tools: Optional[List[BaseTool]] = []
     ):
         """
         Args:
@@ -97,6 +99,7 @@ class ConversableAgent(Agent):
                 for available options.
                 To disable llm-based auto reply, set to False.
             default_auto_reply (str or dict or None): default auto reply when no code execution or llm-based reply is generated.
+            tools (list[BaseTool]): a list of tools to be used by the agent.
         """
         super().__init__(name)
         # a dictionary of conversations, default value is list
@@ -124,9 +127,12 @@ class ConversableAgent(Agent):
         self._reply_func_list = []
         self.reply_at_receive = defaultdict(bool)
         self.register_reply([Agent, None], ConversableAgent.generate_oai_reply)
-        self.register_reply([Agent, None], ConversableAgent.generate_code_execution_reply)
+        # self.register_reply([Agent, None], ConversableAgent.generate_code_execution_reply)
         self.register_reply([Agent, None], ConversableAgent.generate_function_call_reply)
         self.register_reply([Agent, None], ConversableAgent.check_termination_and_human_reply)
+        self.tools = tools
+
+        # print("self.tools: ", self.tools)
 
     def register_reply(
         self,
@@ -181,6 +187,19 @@ class ConversableAgent(Agent):
                 "reset_config": reset_config,
             },
         )
+
+    def print_tools(self, tools):
+        """Print the list of tools."""
+        # print("Here is a list of tools with their descriptions that are available to be used.")
+        # for i, tool in enumerate(tools):
+        #     print(f"{i}. {tool.name}: {tool.description}")
+
+        # result = "Here is a list of tools with their descriptions that are available to be used.\n"
+        result = ""
+        for i, tool in enumerate(tools):
+            result += f"{i}. {tool.name}: {tool.description} \n"
+
+        return result
 
     @property
     def system_message(self):
@@ -286,6 +305,16 @@ class ConversableAgent(Agent):
         if "function_call" in oai_message:
             oai_message["role"] = "assistant"  # only messages with role 'assistant' can have a function call.
         self._oai_messages[conversation_id].append(oai_message)
+
+        print("--------------------------------------")
+        print("IAM: " , self.name)
+        print("oai_messages: ")
+        for k, v in self._oai_messages.items():
+            print("k: ", k)
+            for i in v:
+                print(i["role"], i)
+        print("--------------------------------------")
+
         return True
 
     def send(
@@ -327,6 +356,8 @@ class ConversableAgent(Agent):
         Raises:
             ValueError: if the message can't be converted into a valid ChatCompletion message.
         """
+
+        print(self.name, " is sending message to ", recipient.name)
         # When the agent composes and sends the message, the role of the message is "assistant"
         # unless it's "function".
         valid = self._append_oai_message(message, "assistant", recipient)
@@ -387,6 +418,7 @@ class ConversableAgent(Agent):
             )
 
     def _print_received_message(self, message: Union[Dict, str], sender: Agent):
+        print("######################################################")
         # print the message received
         print(colored(sender.name, "yellow"), "(to", f"{self.name}):\n", flush=True)
         if message.get("role") == "function":
@@ -415,6 +447,7 @@ class ConversableAgent(Agent):
                 )
                 print(colored("*" * len(func_print), "green"), flush=True)
         print("\n", "-" * 80, flush=True, sep="")
+        print("######################################################")
 
     def _process_received_message(self, message, sender, silent):
         message = self._message_to_dict(message)
@@ -424,8 +457,8 @@ class ConversableAgent(Agent):
             raise ValueError(
                 "Received message can't be converted into a valid ChatCompletion message. Either content or function_call must be provided."
             )
-        if not silent:
-            self._print_received_message(message, sender)
+        # if not silent:
+        #     self._print_received_message(message, sender)
 
     def receive(
         self,
@@ -456,6 +489,7 @@ class ConversableAgent(Agent):
         Raises:
             ValueError: if the message can't be converted into a valid ChatCompletion message.
         """
+        print(self.name, " is receiving message from ", sender.name)
         self._process_received_message(message, sender, silent)
         if request_reply is False or request_reply is None and self.reply_at_receive[sender] is False:
             return
@@ -528,7 +562,12 @@ class ConversableAgent(Agent):
                 "message" needs to be provided if the `generate_init_message` method is not overridden.
         """
         self._prepare_chat(recipient, clear_history)
-        self.send(self.generate_init_message(**context), recipient, silent=silent)
+
+        init_message = self.generate_init_message(**context)
+
+        # print(init_message)
+
+        self.send(init_message, recipient, silent=silent)
 
     async def a_initiate_chat(
         self,
@@ -601,6 +640,8 @@ class ConversableAgent(Agent):
             return False, None
         if messages is None:
             messages = self._oai_messages[sender]
+
+        print("OpenAI config", llm_config)
 
         # TODO: #1143 handle token limit exceeded error
         response = oai.ChatCompletion.create(
@@ -771,6 +812,7 @@ class ConversableAgent(Agent):
 
         for reply_func_tuple in self._reply_func_list:
             reply_func = reply_func_tuple["reply_func"]
+            print("reply_func: ", reply_func)
             if exclude and reply_func in exclude:
                 continue
             if asyncio.coroutines.iscoroutinefunction(reply_func):
@@ -778,7 +820,10 @@ class ConversableAgent(Agent):
             if self._match_trigger(reply_func_tuple["trigger"], sender):
                 final, reply = reply_func(self, messages=messages, sender=sender, config=reply_func_tuple["config"])
                 if final:
+                    print("reply: ", reply)
                     return reply
+
+
         return self._default_auto_reply
 
     async def a_generate_reply(
@@ -1006,7 +1051,10 @@ class ConversableAgent(Agent):
         Override this function to customize the initial message based on user's request.
         If not overriden, "message" needs to be provided in the context.
         """
-        return context["message"]
+
+        message = context["message"]
+
+        return message
 
     def register_function(self, function_map: Dict[str, Callable]):
         """Register functions to the agent.

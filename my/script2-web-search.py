@@ -31,10 +31,6 @@ user_proxy = autogen.UserProxyAgent(
     human_input_mode="TERMINATE",
     max_consecutive_auto_reply=10,
     code_execution_config={"work_dir": "temp_dir"},
-    # llm_config={
-    #     "config_list": config_list,  
-    #     "temperature": 0,  
-    # }, 
 )
 
 

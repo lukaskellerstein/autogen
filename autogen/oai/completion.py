@@ -801,15 +801,17 @@ class Completion(openai_Completion):
                         raise
         params = cls._construct_params(context, config, allow_format_str_template=allow_format_str_template)
         if not use_cache:
-            return cls._get_response(
+            response = cls._get_response(
                 params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout, use_cache=False
             )
+            return response
         seed = cls.seed
         if "seed" in params:
             cls.set_cache(params.pop("seed"))
         with diskcache.Cache(cls.cache_path) as cls._cache:
             cls.set_cache(seed)
-            return cls._get_response(params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout)
+            response = cls._get_response(params, raise_on_ratelimit_or_timeout=raise_on_ratelimit_or_timeout)
+            return response
 
     @classmethod
     def instantiate(

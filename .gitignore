@@ -4,7 +4,10 @@ node_modules/
 /.vs
 .vscode
 
+docs
+
 OAI_CONFIG_LIST.json
+OAI_CONFIG_LIST*.json
 
 # Log files
 *.log

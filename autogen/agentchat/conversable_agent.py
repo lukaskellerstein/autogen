@@ -1,4 +1,6 @@
 import asyncio
+import websockets
+import signal
 from collections import defaultdict
 import copy
 import json
@@ -125,11 +127,51 @@ class ConversableAgent(Agent):
         self._default_auto_reply = default_auto_reply
         self._reply_func_list = []
         self.reply_at_receive = defaultdict(bool)
-        self.register_reply([Agent, None], ConversableAgent.generate_oai_reply)
-        self.register_reply([Agent, None], ConversableAgent.generate_code_execution_reply)
-        self.register_reply([Agent, None], ConversableAgent.generate_function_call_reply)
-        self.register_reply([Agent, None], ConversableAgent.generate_async_function_call_reply)
-        self.register_reply([Agent, None], ConversableAgent.check_termination_and_human_reply)
+        self.register_reply([str, None], ConversableAgent.generate_oai_reply)
+        self.register_reply([str, None], ConversableAgent.generate_code_execution_reply)
+        self.register_reply([str, None], ConversableAgent.generate_function_call_reply)
+        self.register_reply([str, None], ConversableAgent.generate_async_function_call_reply)
+        self.register_reply([str, None], ConversableAgent.check_termination_and_human_reply)
+
+        self.websocket = None
+        # Start the connection to the WebSocket server
+        asyncio.create_task(self.connect("ws://localhost:8000", self.name))
+        
+        
+    async def connect(self, uri, username):
+        try:
+            async with websockets.connect(uri) as websocket:
+                self.websocket = websocket
+
+                # send registration message
+                register_message = json.dumps({"action": "register", "payload": username})
+                await websocket.send(register_message)
+
+                # start listening
+                await self.listen_messages(websocket)
+        except websockets.ConnectionClosed as e:
+            print(f"WebSocket connection closed: {e}")
+        except Exception as e:
+            print(f"Error occurred: {e}")
+
+    async def listen_messages(self, websocket):
+        try:
+            while True:
+                message = await websocket.recv()
+                data = json.loads(message)
+                
+                print("--------------------------------------------------------------------")
+                print(f"[{self.name}]: receiving message from [{data['sender']}]: {message}")
+                print("--------------------------------------------------------------------")
+
+                msg = data["message"]
+                sender = data["sender"]
+                request_reply = data["request_reply"]
+                silent = data["silent"]
+
+                self.receive(msg, sender, request_reply, silent)
+        except websockets.ConnectionClosed as e:
+            print(f"WebSocket connection closed with code: {e.code}")
 
     def register_reply(
         self,
@@ -217,11 +259,11 @@ class ConversableAgent(Agent):
         return self._max_consecutive_auto_reply if sender is None else self._max_consecutive_auto_reply_dict[sender]
 
     @property
-    def chat_messages(self) -> Dict[Agent, List[Dict]]:
+    def chat_messages(self) -> Dict[str, List[Dict]]:
         """A dictionary of conversations from agent to list of messages."""
         return self._oai_messages
 
-    def last_message(self, agent: Optional[Agent] = None) -> Dict:
+    def last_message(self, agent: Optional[str] = None) -> Dict:
         """The last message exchanged with the agent.
 
         Args:
@@ -262,7 +304,7 @@ class ConversableAgent(Agent):
         else:
             return dict(message)
 
-    def _append_oai_message(self, message: Union[Dict, str], role, conversation_id: Agent) -> bool:
+    def _append_oai_message(self, message: Union[Dict, str], role, conversation_id: str) -> bool:
         """Append a message to the ChatCompletion conversation.
 
         If the message received is a string, it will be put in the "content" field of the new dictionary.
@@ -294,10 +336,31 @@ class ConversableAgent(Agent):
         self._oai_messages[conversation_id].append(oai_message)
         return True
 
+    def send_broker_message(self, sender: str, receivers: list, message: str | Any, request_reply: bool, silent: bool):
+        """
+        Send a message to the specified receivers.
+        """
+        # print(f"[{self.name}]: send_broker_message0", message)
+
+        data = None
+
+        if isinstance(message, str):
+            data = json.loads(message)
+
+        # print(f"[{self.name}]: send_broker_message1", data)
+        msg = json.dumps({"action": "send_message", "payload": {"sender": sender, "receivers": receivers, "message": data["message"], "request_reply": request_reply, "silent": silent}})
+        
+        print("--------------------------------------------------------------------")
+        print(f"[{self.name}]: sending message to [{receivers}] ", msg)
+        print("--------------------------------------------------------------------")
+        
+        asyncio.create_task(self.websocket.send(msg))
+
+
     def send(
         self,
         message: Union[Dict, str],
-        recipient: Agent,
+        recipient: str,
         request_reply: Optional[bool] = None,
         silent: Optional[bool] = False,
     ) -> bool:
@@ -336,8 +399,22 @@ class ConversableAgent(Agent):
         # When the agent composes and sends the message, the role of the message is "assistant"
         # unless it's "function".
         valid = self._append_oai_message(message, "assistant", recipient)
+
+        print("*************** ALL MESSAGES ***************")
+        print(self.name)
+        for k, v in self._oai_messages.items():
+            print("k: ", k)
+            for i in v:
+                print(i["role"], i)
+        print("*********************************************")
+
+
         if valid:
-            recipient.receive(message, self, request_reply, silent)
+            # send to message broker
+            self.send_broker_message(self.name, [recipient], message, request_reply, silent)
+
+            # call recipient's receive method
+            # recipient.receive(message, self, request_reply, silent)
         else:
             raise ValueError(
                 "Message can't be converted into a valid ChatCompletion message. Either content or function_call must be provided."
@@ -392,9 +469,9 @@ class ConversableAgent(Agent):
                 "Message can't be converted into a valid ChatCompletion message. Either content or function_call must be provided."
             )
 
-    def _print_received_message(self, message: Union[Dict, str], sender: Agent):
+    def _print_received_message(self, message: Union[Dict, str], sender: str):
         # print the message received
-        print(colored(sender.name, "yellow"), "(to", f"{self.name}):\n", flush=True)
+        print(colored(sender, "yellow"), "(to", f"{self.name}):\n", flush=True)
         if message.get("role") == "function":
             func_print = f"***** Response from calling function \"{message['name']}\" *****"
             print(colored(func_print, "green"), flush=True)
@@ -425,7 +502,7 @@ class ConversableAgent(Agent):
                 print(colored("*" * len(func_print), "green"), flush=True)
         print("\n", "-" * 80, flush=True, sep="")
 
-    def _process_received_message(self, message, sender, silent):
+    def _process_received_message(self, message, sender: str, silent):
         message = self._message_to_dict(message)
         # When the agent receives a message, the role of the message is "user". (If 'role' exists and is 'function', it will remain unchanged.)
         valid = self._append_oai_message(message, "user", sender)
@@ -433,13 +510,13 @@ class ConversableAgent(Agent):
             raise ValueError(
                 "Received message can't be converted into a valid ChatCompletion message. Either content or function_call must be provided."
             )
-        if not silent:
-            self._print_received_message(message, sender)
+        # if not silent:
+        #     self._print_received_message(message, sender)
 
     def receive(
         self,
         message: Union[Dict, str],
-        sender: Agent,
+        sender: str,
         request_reply: Optional[bool] = None,
         silent: Optional[bool] = False,
     ):
@@ -465,12 +542,44 @@ class ConversableAgent(Agent):
         Raises:
             ValueError: if the message can't be converted into a valid ChatCompletion message.
         """
+
         self._process_received_message(message, sender, silent)
+
+        print("*************** ALL MESSAGES ***************")
+        print(self.name)
+        for k, v in self._oai_messages.items():
+            print("k: ", k)
+            for i in v:
+                print(i["role"], i)
+        print("*********************************************")
+
+
         if request_reply is False or request_reply is None and self.reply_at_receive[sender] is False:
             return
+        
+        # print(f"[{self.name}]: self.chat_messages", self.chat_messages)
+        # print(f"[{self.name}]: sender", sender)
+        # print(f"[{self.name}]: self.chat_messages[sender]", self.chat_messages[sender])
+
         reply = self.generate_reply(messages=self.chat_messages[sender], sender=sender)
+
+        print(f"==========================")
+        print(self.name)
+        print(reply)
+        print(f"==========================")
+
+        new_message = json.dumps({
+          "sender": self.name,
+          "receivers": [sender],
+          "message": reply
+        })
+
         if reply is not None:
-            self.send(reply, sender, silent=silent)
+            # self.send(reply, sender, silent=silent)
+            # send to message broker
+            self.send(new_message, sender, request_reply, silent)
+            # self.send_broker_message(self.name, [sender], new_message, request_reply, silent)
+
 
     async def a_receive(
         self,
@@ -513,8 +622,8 @@ class ConversableAgent(Agent):
         recipient.reset_consecutive_auto_reply_counter(self)
         self.reply_at_receive[recipient] = recipient.reply_at_receive[self] = True
         if clear_history:
-            self.clear_history(recipient)
-            recipient.clear_history(self)
+            self.clear_history(recipient.name)
+            recipient.clear_history(self.name)
 
     def initiate_chat(
         self,
@@ -537,7 +646,11 @@ class ConversableAgent(Agent):
                 "message" needs to be provided if the `generate_init_message` method is not overridden.
         """
         self._prepare_chat(recipient, clear_history)
-        self.send(self.generate_init_message(**context), recipient, silent=silent)
+
+        init_message = self.generate_init_message(**context)
+
+        self.send(init_message, recipient.name, True, silent)
+        # self.send_broker_message(self.name, [recipient.name], init_message, True, silent)
 
     async def a_initiate_chat(
         self,
@@ -587,7 +700,7 @@ class ConversableAgent(Agent):
         else:
             self._consecutive_auto_reply_counter[sender] = 0
 
-    def clear_history(self, agent: Optional[Agent] = None):
+    def clear_history(self, agent: Optional[str] = None):
         """Clear the chat history of the agent.
 
         Args:
@@ -601,7 +714,7 @@ class ConversableAgent(Agent):
     def generate_oai_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ) -> Tuple[bool, Union[str, Dict, None]]:
         """Generate a reply using autogen.oai."""
@@ -620,7 +733,7 @@ class ConversableAgent(Agent):
     def generate_code_execution_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ):
         """Generate a reply using code execution."""
@@ -656,7 +769,7 @@ class ConversableAgent(Agent):
     def generate_function_call_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ):
         """Generate a reply using function call."""
@@ -673,7 +786,7 @@ class ConversableAgent(Agent):
     async def generate_async_function_call_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ):
         """Generate a reply using async function call."""
@@ -695,7 +808,7 @@ class ConversableAgent(Agent):
     def check_termination_and_human_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ) -> Tuple[bool, Union[str, Dict, None]]:
         """Check if the conversation should be terminated, and if human reply is provided."""
@@ -766,7 +879,7 @@ class ConversableAgent(Agent):
     async def a_check_termination_and_human_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         config: Optional[Any] = None,
     ) -> Tuple[bool, Union[str, Dict, None]]:
         """(async) Check if the conversation should be terminated, and if human reply is provided."""
@@ -837,7 +950,7 @@ class ConversableAgent(Agent):
     def generate_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         exclude: Optional[List[Callable]] = None,
     ) -> Union[str, Dict, None]:
         """Reply based on the conversation history and the sender.
@@ -875,6 +988,8 @@ class ConversableAgent(Agent):
 
         for reply_func_tuple in self._reply_func_list:
             reply_func = reply_func_tuple["reply_func"]
+            print(reply_func)
+
             if exclude and reply_func in exclude:
                 continue
             if asyncio.coroutines.iscoroutinefunction(reply_func):
@@ -888,7 +1003,7 @@ class ConversableAgent(Agent):
     async def a_generate_reply(
         self,
         messages: Optional[List[Dict]] = None,
-        sender: Optional[Agent] = None,
+        sender: Optional[str] = None,
         exclude: Optional[List[Callable]] = None,
     ) -> Union[str, Dict, None]:
         """(async) Reply based on the conversation history and the sender.

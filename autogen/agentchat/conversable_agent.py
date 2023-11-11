@@ -13,6 +13,7 @@ from autogen.code_utils import (
     extract_code,
     infer_lang,
 )
+import nats
 
 try:
     from termcolor import colored
@@ -44,6 +45,8 @@ class ConversableAgent(Agent):
         "model": DEFAULT_MODEL,
     }
     MAX_CONSECUTIVE_AUTO_REPLY = 100  # maximum number of consecutive auto replies (subject to future change)
+
+    broker = None
 
     def __init__(
         self,
@@ -130,6 +133,31 @@ class ConversableAgent(Agent):
         self.register_reply([Agent, None], ConversableAgent.generate_function_call_reply)
         self.register_reply([Agent, None], ConversableAgent.generate_async_function_call_reply)
         self.register_reply([Agent, None], ConversableAgent.check_termination_and_human_reply)
+
+    async def subscribe(self, url):
+        self.broker = await nats.connect(url)
+        print(f"Connected to NATS at {self.broker.connected_url.netloc}...")
+
+        async def subscribe_handler(msg):
+            subject = msg.subject
+            reply = msg.reply
+            data = msg.data.decode()
+            print("Received a message on '{subject} {reply}': {data}".format(
+                subject=subject, reply=reply, data=data))
+            
+        print("before subscribe")
+
+        # Basic subscription to receive all published messages
+        # which are being sent to a single topic 'discover'
+        await self.broker.subscribe(f"tenantId.userId.chatId.{self.name}", cb=subscribe_handler)
+
+        print("after subscribe")
+
+    async def publish(self, message):
+        print("before publish", message)
+        await self.broker.publish(f"tenantId.userId.chatId.{self.name}", message)
+        print("after publish", message)
+
 
     def register_reply(
         self,

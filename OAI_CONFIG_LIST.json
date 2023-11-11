@@ -1,9 +1,0 @@
-[
-  {
-    "api_type": "azure",
-    "model": "my-gpt35-16k-1",
-    "api_key": "038fbf207a554abfa7704462b1c55344",
-    "base_url": "https://ai-openai-lk-02.openai.azure.com/",
-    "api_version": "2023-07-01-preview"
-  }
-]

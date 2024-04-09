@@ -1,3 +1,6 @@
+import sys
+sys.path.append('./')
+
 from typing import Callable
 import autogen
 import asyncio
@@ -10,7 +13,7 @@ print("[user_proxy] event loop: ", asyncio.get_event_loop())
 # --------------------------------------------------
 
 # create a UserProxyAgent instance named "user_proxy"
-user_proxy = autogen.UserProxyAgent(
+user_proxy = autogen.UserProxyDAgent(
     name="user_proxy",
     human_input_mode="TERMINATE",
     max_consecutive_auto_reply=10,

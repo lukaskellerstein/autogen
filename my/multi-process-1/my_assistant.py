@@ -1,3 +1,6 @@
+import sys
+sys.path.append('./')
+
 import autogen
 import asyncio
 import threading
@@ -8,6 +11,8 @@ print("[assistant] event loop: ", asyncio.get_event_loop())
 
 # --------------------------------------------------
 
+print(autogen.__file__)
+
 config_list = autogen.config_list_from_json(
     "OAI_CONFIG_LIST.json",
     file_location="./",
@@ -16,7 +21,7 @@ config_list = autogen.config_list_from_json(
 print("config_list: ", config_list)
 
 # create an AssistantAgent instance named "assistant"
-assistant = autogen.AssistantAgent(
+assistant = autogen.AssistantDAgent(
     name="assistant",
     llm_config={
         "config_list": config_list,  

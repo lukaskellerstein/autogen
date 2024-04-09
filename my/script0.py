@@ -1,5 +1,5 @@
-import sys
-sys.path.append('../autogen')
+# import sys
+# sys.path.append('../autogen')
 
 import autogen
 
@@ -9,11 +9,6 @@ config_list = autogen.config_list_from_json(
 )
 
 print("config_list: ", config_list)
-
-
-# tools
-tools = [ autogen.ShellTool(), autogen.PythonCodeTool(), autogen.ChromaDbTool()]
-
  
 # create an AssistantAgent instance named "assistant"
 assistant = autogen.AssistantAgent(
@@ -22,7 +17,6 @@ assistant = autogen.AssistantAgent(
         "config_list": config_list,  
         "temperature": 0,  
     }, 
-    tools=tools,
 )
 
 # create a UserProxyAgent instance named "user_proxy"

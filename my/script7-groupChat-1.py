@@ -28,12 +28,12 @@ user_proxy = autogen.UserProxyAgent(
 
 # create an AssistantAgent instance named "assistant"
 coder = autogen.AssistantAgent(
-    name="coder",
+    name="assistant1-coder",
     llm_config=llm_config 
 )
 
 pm = autogen.AssistantAgent(
-    name="Product_manager",
+    name="assistant2-product_manager",
     system_message="Creative in software product ideas.",
     llm_config=llm_config,
 )
